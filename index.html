@@ -1,80 +1,65 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- 1. 引入 A-Frame -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <!-- 2. 引入 MindAR 的 A-Frame 适配库 -->
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    
+    <style>
+      body { margin: 0; }
+      /* 隐藏 loading 遮罩的自定义样式（可选） */
+      .mindar-ui-loading { background: transparent !important; }
+    </style>
+  </head>
+  <body>
+    <!-- 
+      mindar-image: 配置项 
+      imageTargetSrc: 刚才下载的 .mind 文件路径
+      uiScanning: #no; 可以隐藏默认的扫描框
+    -->
+    <a-scene 
+      mindar-image="imageTargetSrc: ./targets.mind; filterMinCF:0.0001; filterBeta: 0.001;" 
+      color-space="sRGB" 
+      renderer="colorManagement: true, physicallyCorrectLights" 
+      vr-mode-ui="enabled: false" 
+      device-orientation-permission-ui="enabled: false">
 
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hello, Deno</title>
-  <link rel="preload" href="https://demo-styles.deno.deno.net/fonts/Moranga-Regular.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="preload" href="https://demo-styles.deno.deno.net/fonts/Moranga-Medium.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="preload" href="https://demo-styles.deno.deno.net/fonts/Recursive_Variable.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="stylesheet" href="https://demo-styles.deno.deno.net/styles.css">
-  <style>
-    img {
-      display: inline-block;
-      vertical-align: middle;
-    }
-  </style>
-</head>
+      <!-- 资源预加载区 -->
+      <a-assets>
+        <!-- 你的3D头像模型路径 -->
+        <a-asset-item id="avatarModel" src="./my-avatar.glb"></a-asset-item>
+      </a-assets>
 
-<body>
-    <main>
-      <section>
-        <a href="https://deno.com/deploy">
-        </a>
-      <h1>
-        <p>
-          Hello, Deno!
-        </p>
-      </h1>
-      <p>
-        This little example is being served by <a href="https://deno.com/">Deno</a>.
-        You can run it locally or in porduction on <a href="https://deno.com/deploy">Deno Deploy</a> or other hosting platforms.
-      </p>
-      <ul>
-        <li>Run it locally with<code>deno task dev</code></li>
-        <li>Deploy it to <a href="https://deno.com/deploy">Deno Deploy</a> via the CLI by running<code>deno deploy</code></li>
-        <li>Run it locally and share it publically by running <code>deno deploy --connected</code></li>
-      </ul>
-    </section>
-      <hr>
-    <section>
-      <h2>What's next?</h2>
-      <p>
-        You can clone this example and deploy it to Deno Deploy in just a few clicks
-        <a href="https://app.deno.com/new?clone=https://github.com/denoland/examples&path=hello-world"><img src="https://deno.com/button" alt="Deploy on Deno"/></a>
-      </p>
-      <ul>
-        <li>
-          <a href="https://docs.deno.com/examples">More examples in the Deno Docs</a>
-        </li>
-        <li>
-          <a href="https://deno.com/deploy">Deno Deploy Early Access</a>
-        </li>
-      </ul>
-    </section>
-    </main>
-    <hr>
-    <footer>
-      <section>
-      <ul class="flex-btwn">
-        <li>
-          <a href="https://deno.com">BlueSky</a>
-        </li>
-        <li>
-          <a href="https://deno.com">Twitter</a>
-        </li>
-        <li>
-          <a href="https://deno.com">YouTube</a>
-        </li>
-        <li>
-          <a href="https://deno.com">Newsletter</a>
-        </li>
-        <li>
-          <a href="https://deno.com">Deno</a>
-        </li>
-      </ul>
-      </section>
-    </footer>
-</body>
+      <!-- 摄像头实体 -->
+      <a-camera position="0 0 0" look-controls="false"></a-camera>
+
+      <!-- 
+        Target 实体 
+        targetIndex: 0 代表 .mind 文件里的第一张图（如果你上传了多张图，索引依次增加）
+      -->
+      <a-entity mindar-image-target="targetIndex: 0">
+        
+        <!-- 
+          这里是你的头像 
+          position: x y z (0 0 0 代表紧贴书本中心)
+          scale: 缩放比例 (glb模型单位通常是米，可能需要设为 0.1 或 0.5)
+          rotation: 旋转角度 (x y z)
+          animation: 可以加一点简单的旋转动画
+        -->
+        <a-gltf-model 
+          src="#avatarModel" 
+          position="0 0 0" 
+          scale="0.5 0.5 0.5" 
+          rotation="90 0 0"
+          animation="property: rotation; to: 90 360 0; loop: true; dur: 10000">
+        </a-gltf-model>
+        
+        <!-- 为了调试，你可以先放一个红色的方块看看位置对不对 -->
+        <!-- <a-box color="red" position="0 0 0" scale="0.5 0.5 0.5"></a-box> -->
+
+      </a-entity>
+    </a-scene>
+  </body>
 </html>

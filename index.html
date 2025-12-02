@@ -3,9 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>虚拟空间展示 - 无标记版</title>
+    <title>空间 AR - 调试修复版</title>
 
-    <!-- 1. Three.js 核心 -->
+    <!-- 0. 引入 vConsole：手机右下角会出现绿色按钮，用于看报错 -->
+    <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
+    <script>
+        // 初始化调试器
+        var vConsole = new VConsole();
+        console.log("vConsole 已启动，环境检测中...");
+    </script>
+
+    <!-- 1. Three.js 配置 -->
     <script type="importmap">
         {
             "imports": {
@@ -15,63 +23,43 @@
         }
     </script>
     
-    <!-- 2. MediaPipe (用于手势) -->
+    <!-- 2. MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #bg-video { position: fixed; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+        #three-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
         
-        /* 视频背景层 */
-        #bg-video {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            object-fit: cover; z-index: 0;
-            /* 后置摄像头不需要镜像，如果是前置需要 scaleX(-1) */
-        }
-
-        /* 3D 渲染层 */
-        #three-canvas {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 1; pointer-events: none; /* 让点击穿透 */
-        }
-
-        /* 启动/权限层 */
+        /* 启动层 */
         #start-layer {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); z-index: 999;
+            background: #111; z-index: 999;
             display: flex; flex-direction: column; justify-content: center; align-items: center; color: white;
         }
         #enter-btn {
-            margin-top: 20px; padding: 12px 30px; border-radius: 30px;
-            background: #00ff88; color: #000; font-weight: bold; border: none; font-size: 16px;
+            margin-top: 30px; padding: 15px 40px; border-radius: 50px;
+            background: #007aff; color: white; font-size: 18px; border: none;
+            box-shadow: 0 4px 12px rgba(0,122,255,0.5);
         }
-        
-        /* 状态提示 */
-        #status-bar {
-            position: fixed; top: 20px; width: 100%; text-align: center;
-            color: rgba(255,255,255,0.8); z-index: 100; font-size: 14px;
-            text-shadow: 1px 1px 2px black; pointer-events: none;
+        #error-log {
+            margin-top: 20px; color: #ff4444; font-size: 12px; padding: 0 20px; text-align: center;
         }
-        
-        /* Canvas 中转 (安卓兼容) */
         #input-canvas { display: none; }
+        #status-bar { position: fixed; top: 20px; width: 100%; text-align: center; color: yellow; z-index: 100; text-shadow: 1px 1px 2px black; }
     </style>
 </head>
 <body>
 
-    <!-- 启动层 -->
     <div id="start-layer">
-        <h2>🏛️ 沉浸式展台</h2>
-        <p style="opacity: 0.7; font-size: 14px; padding: 0 20px; text-align: center;">
-            无需扫描，点击按钮即可在空间中看到文物
-        </p>
-        <button id="enter-btn">开启空间 (获取权限)</button>
+        <h2>🏛️ 空间文物展示</h2>
+        <div id="error-log">等待操作...</div>
+        <button id="enter-btn">点击进入体验</button>
     </div>
 
-    <div id="status-bar">准备中...</div>
-
-    <!-- 核心元素 -->
+    <div id="status-bar"></div>
     <video id="bg-video" playsinline webkit-playsinline muted autoplay></video>
     <canvas id="input-canvas"></canvas>
     <canvas id="three-canvas"></canvas>
@@ -81,229 +69,185 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { DeviceOrientationControls } from 'three/addons/controls/DeviceOrientationControls.js';
 
-    // === 配置 ===
-    const CONFIG = {
-        distance: 2.5,  // 模型距离摄像头的距离 (米)
-        scale: 0.8,     // 模型初始大小
-        fps: 15         // 手势识别帧率 (省电)
-    };
-
-    // DOM
+    const btn = document.getElementById('enter-btn');
+    const errLog = document.getElementById('error-log');
+    const startLayer = document.getElementById('start-layer');
     const videoEl = document.getElementById('bg-video');
     const inputCanvas = document.getElementById('input-canvas');
     const ctx = inputCanvas.getContext('2d');
     const statusBar = document.getElementById('status-bar');
-    const startLayer = document.getElementById('start-layer');
-    const enterBtn = document.getElementById('enter-btn');
 
-    // 3D 变量
     let scene, camera, renderer, model, controls;
     let isRunning = false;
+    let hands;
 
-    // 手势变量
-    let isPinching = false;
-    let startPinch = { x: 0, y: 0 };
-    let initialTransform = { scale: 1, rotY: 0 };
-    let targetTransform = { scale: CONFIG.scale, rotY: 0 };
-    let currentTransform = { scale: CONFIG.scale, rotY: 0 };
-
-    // === 1. 权限与启动流程 ===
-    enterBtn.addEventListener('click', async () => {
+    // === 点击事件 ===
+    btn.addEventListener('click', async () => {
+        errLog.innerText = "正在初始化...";
+        
         try {
-            // iOS 13+ 需要请求 DeviceOrientation 权限
+            // 1. 检查 HTTPS
+            if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                throw new Error("必须使用 HTTPS 协议，否则无法调用传感器！");
+            }
+
+            // 2. 请求陀螺仪权限 (iOS 核心步骤)
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                const response = await DeviceOrientationEvent.requestPermission();
-                if (response !== 'granted') {
-                    alert("需要传感器权限才能体验空间效果");
-                    return;
+                const permission = await DeviceOrientationEvent.requestPermission();
+                if (permission !== 'granted') {
+                    throw new Error("陀螺仪权限被拒绝，无法使用空间定位");
                 }
             }
-            
-            startLayer.style.display = 'none';
-            statusBar.innerText = "正在初始化空间...";
-            
-            // 启动摄像头
-            await startCamera();
-            // 初始化 3D
-            initThree();
-            // 初始化 AI
-            initAI();
-            
-            isRunning = true;
-            
-        } catch (e) {
-            console.error(e);
-            alert("启动失败: " + e.message);
-        }
-    });
 
-    // === 2. 摄像头逻辑 (后置) ===
-    async function startCamera() {
-        try {
+            // 3. 启动摄像头
+            errLog.innerText = "正在启动摄像头...";
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: {
-                    facingMode: 'environment', // 后置
+                    facingMode: 'environment',
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 },
                 audio: false
             });
             videoEl.srcObject = stream;
-            return new Promise(resolve => {
+            
+            // 等待视频流真正开始
+            await new Promise((resolve) => {
                 videoEl.onloadedmetadata = () => {
                     videoEl.play();
                     resolve();
                 };
             });
-        } catch (err) {
-            alert("无法调用摄像头，请确保在 HTTPS 环境下");
-            throw err;
+
+            // 4. 全部成功，隐藏启动页
+            startLayer.style.display = 'none';
+            statusBar.innerText = "正在加载 3D 场景...";
+            
+            // 5. 初始化 3D 和 AI
+            initThree();
+            initAI();
+            isRunning = true;
+
+        } catch (e) {
+            console.error(e);
+            alert("启动失败: " + e.message); // 弹窗报错
+            errLog.innerText = e.message;
+        }
+    });
+
+    // === Three.js 逻辑 ===
+    function initThree() {
+        try {
+            scene = new THREE.Scene();
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+            dirLight.position.set(0, 5, 5);
+            scene.add(ambientLight);
+            scene.add(dirLight);
+
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+            
+            // 绑定陀螺仪控制
+            controls = new DeviceOrientationControls(camera);
+
+            renderer = new THREE.WebGLRenderer({
+                canvas: document.getElementById('three-canvas'),
+                alpha: true,
+                antialias: true
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            // 加载模型
+            const loader = new GLTFLoader();
+            const modelUrl = './DamagedHelmet.glb';
+            
+            loader.load(modelUrl, (gltf) => {
+                model = gltf.scene;
+                // 放在正前方 3 米处
+                model.position.set(0, 0, -3); 
+                model.scale.set(1, 1, 1);
+                scene.add(model);
+                statusBar.innerText = "加载完成！转动手机查看文物";
+            }, 
+            (xhr) => { console.log((xhr.loaded / xhr.total * 100) + '% loaded'); },
+            (error) => { console.error(error); statusBar.innerText = "模型加载失败，请检查网络"; }
+            );
+
+            animate();
+        } catch(e) {
+            console.error("ThreeJS Init Error:", e);
+            alert("3D 引擎初始化失败");
         }
     }
 
-    // === 3. Three.js 场景构建 ===
-    function initThree() {
-        // 场景
-        scene = new THREE.Scene();
-        // 光照
-        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
-        const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-        dirLight.position.set(0, 5, 5);
-        scene.add(ambientLight);
-        scene.add(dirLight);
-
-        // 相机
-        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
-        
-        // 【关键】使用 DeviceOrientationControls
-        // 这会让 Three.js 的相机跟随手机转动
-        controls = new DeviceOrientationControls(camera);
-
-        // 渲染器
-        renderer = new THREE.WebGLRenderer({
-            canvas: document.getElementById('three-canvas'),
-            alpha: true, // 透明背景，为了透出下面的 video
-            antialias: true
-        });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-        // 加载模型
-        const loader = new GLTFLoader();
-        // 替换为你的 GLB 模型地址
-        const modelUrl = './DamagedHelmet.glb';
-        
-        loader.load(modelUrl, (gltf) => {
-            model = gltf.scene;
-            
-            // 初始位置设置在：正前方 (Z负轴)
-            // 注意：我们把模型放进一个 Group 里，方便旋转
-            model.position.set(0, 0, -CONFIG.distance); 
-            
-            scene.add(model);
-            statusBar.innerText = "文物已悬浮，转身看看";
-            animate();
-        });
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-    }
-
-    // 渲染循环
     function animate() {
         requestAnimationFrame(animate);
-        
-        // 更新相机控制 (陀螺仪)
-        controls.update();
-
-        if (model) {
-            // 平滑处理手势交互
-            // 缩放
-            currentTransform.scale += (targetTransform.scale - currentTransform.scale) * 0.1;
-            model.scale.set(currentTransform.scale, currentTransform.scale, currentTransform.scale);
-            
-            // 旋转 (这里我们旋转模型本身，而不是相机)
-            currentTransform.rotY += (targetTransform.rotY - currentTransform.rotY) * 0.1;
-            model.rotation.y = currentTransform.rotY;
-        }
-
-        renderer.render(scene, camera);
+        if(controls) controls.update();
+        if(renderer && scene && camera) renderer.render(scene, camera);
     }
 
-    // === 4. 手势 AI 逻辑 ===
+    // === MediaPipe 手势逻辑 ===
     function initAI() {
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 0, // 性能优先
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
-        hands.onResults(onHandResults);
-
-        // 节流检测循环
-        let lastTime = 0;
-        const interval = 1000 / CONFIG.fps;
-
-        async function aiLoop(time) {
-            if (!isRunning) return;
+        try {
+            hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 0,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            hands.onResults(onResults);
             
-            if (time - lastTime >= interval && videoEl.videoWidth > 0) {
+            // 启动循环
+            startAILoop();
+        } catch (e) {
+            console.error("AI Init Error:", e);
+        }
+    }
+
+    // AI 节流循环
+    let lastTime = 0;
+    function startAILoop() {
+        const loop = (time) => {
+            if (isRunning && videoEl.videoWidth > 0 && time - lastTime > 66) { // ~15 FPS
                 lastTime = time;
-                // 中转 Canvas，防止安卓黑屏
                 if (inputCanvas.width !== videoEl.videoWidth) {
                     inputCanvas.width = videoEl.videoWidth;
                     inputCanvas.height = videoEl.videoHeight;
                 }
                 ctx.drawImage(videoEl, 0, 0);
-                
-                try {
-                    await hands.send({image: inputCanvas});
-                } catch (e) {}
+                hands.send({image: inputCanvas}).catch(e => console.error(e));
             }
-            requestAnimationFrame(aiLoop);
-        }
-        aiLoop(0);
+            requestAnimationFrame(loop);
+        };
+        loop(0);
     }
 
-    // 手势处理
-    function onHandResults(results) {
-        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-            isPinching = false;
-            return;
-        }
-
-        const lm = results.multiHandLandmarks[0];
-        const dist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y); // 拇指与食指距离
-
-        if (dist < 0.08) {
-            // 捏合中
-            if (!isPinching) {
-                isPinching = true;
-                startPinch = { x: lm[8].x, y: lm[8].y };
-                initialTransform = { ...targetTransform };
-                statusBar.innerText = "✊ 交互中：上下缩放 / 左右旋转";
-                statusBar.style.color = "#FFD700";
+    function onResults(results) {
+        // 简单交互演示
+        if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const lm = results.multiHandLandmarks[0];
+            const dist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+            
+            if(dist < 0.08 && model) {
+                statusBar.innerText = "✊ 捏合旋转中";
+                statusBar.style.color = "yellow";
+                model.rotation.y += 0.05;
             } else {
-                // 计算移动量
-                const deltaX = lm[8].x - startPinch.x;
-                const deltaY = startPinch.y - lm[8].y; // 上为正
-
-                // 控制
-                targetTransform.rotY = initialTransform.rotY + (deltaX * 3);
-                targetTransform.scale = Math.max(0.1, Math.min(3, initialTransform.scale + (deltaY * 2)));
-            }
-        } else {
-            if (isPinching) {
-                isPinching = false;
-                statusBar.innerText = "🖐 松开以固定";
-                statusBar.style.color = "#fff";
+                statusBar.innerText = "🖐 发现手部";
+                statusBar.style.color = "#0f0";
             }
         }
     }
+
+    // 窗口调整
+    window.addEventListener('resize', () => {
+        if(camera && renderer) {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    });
 </script>
 </body>
 </html>

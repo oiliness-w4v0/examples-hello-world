@@ -3,67 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR 展台 - 稳定交互版</title>
+    <title>AR 展台 - 安卓优化版</title>
 
-    <!-- 1. A-Frame & MindAR -->
+    <!-- 1. 核心库 -->
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-    
-    <!-- 2. MediaPipe Hands -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
         
-        #ui-overlay {
+        /* === 加载层 (Loading) === */
+        #loader-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000;
+            z-index: 9999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            transition: opacity 0.5s ease;
+        }
+        .spinner {
+            width: 50px; height: 50px;
+            border: 5px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #00ff88;
+            animation: spin 1s ease-in-out infinite;
+        }
+        .loading-text {
+            color: white; margin-top: 20px; font-size: 16px; letter-spacing: 1px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        /* === 状态 UI === */
+        #ui-layer {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none; z-index: 10;
-            display: flex; flex-direction: column; align-items: center;
         }
-
         #status-pill {
-            margin-top: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            color: #fff;
-            padding: 8px 20px;
-            border-radius: 20px;
-            font-size: 14px;
-            border: 1px solid rgba(255,255,255,0.2);
-            backdrop-filter: blur(5px);
-            transition: all 0.3s;
-        }
-
-        /* 扫描框 */
-        #scan-box {
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 60vw; height: 60vw;
-            border: 2px solid rgba(255, 255, 255, 0.8);
-            border-radius: 10px;
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6); color: #fff;
+            padding: 8px 24px; border-radius: 30px;
+            font-size: 14px; border: 1px solid rgba(255,255,255,0.2);
+            white-space: nowrap;
         }
         
-        /* 扫描框四角特效 */
-        #scan-box::before, #scan-box::after {
-            content: ''; position: absolute; width: 20px; height: 20px;
-            border-color: #00ff88; border-style: solid;
+        /* 扫描框 */
+        #scan-box {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 60vw; height: 60vw;
+            border: 2px dashed rgba(255, 255, 255, 0.5); border-radius: 12px;
+            box-shadow: 0 0 0 2000px rgba(0,0,0,0.5); /* 黑色遮罩 */
         }
-        #scan-box::before { top: -2px; left: -2px; border-width: 4px 0 0 4px; }
-        #scan-box::after { bottom: -2px; right: -2px; border-width: 0 4px 4px 0; }
-
-        .hidden { opacity: 0; transition: opacity 0.5s; }
+        
+        .hidden { opacity: 0; pointer-events: none; }
     </style>
 </head>
 <body>
 
-    <div id="ui-overlay">
-        <div id="status-pill">初始化引擎...</div>
+    <!-- Loading 遮罩 -->
+    <div id="loader-overlay">
+        <div class="spinner"></div>
+        <div class="loading-text" id="loading-msg">启动 AR 引擎...</div>
+    </div>
+
+    <!-- UI 层 -->
+    <div id="ui-layer">
+        <div id="status-pill" class="hidden">请扫描识别图</div>
         <div id="scan-box"></div>
     </div>
 
     <!-- MindAR 场景 -->
-    <!-- 注意：uiScanning: no 关闭默认UI，使用我们自定义的 -->
     <a-scene 
         mindar-image="imageTargetSrc: ./card2.mind; uiScanning: no; filterMinCF:0.0001; filterBeta: 0.001;" 
         color-space="sRGB" 
@@ -75,204 +85,199 @@
 
         <!-- 识别目标 -->
         <a-entity id="target-entity" mindar-image-target="targetIndex: 0">
-            <!-- 
-                模型包裹层 
-                scale: 初始大小
-            -->
-            <a-entity id="model-wrapper" position="0 0 0" scale="0.5 0.5 0.5" rotation="0 0 0">
+            <!-- 模型包裹层 -->
+            <a-entity id="model-wrapper" position="0 0 0" scale="0.5 0.5 0.5">
                 <a-gltf-model 
                     src="./DamagedHelmet.glb"
-                    position="0 0 0"
-                    rotation="90 0 0"> <!-- 根据模型自身坐标轴可能需要微调初始角度 -->
+                    position="0 0 0" rotation="90 0 0">
                 </a-gltf-model>
             </a-entity>
         </a-entity>
     </a-scene>
 
 <script>
-    // === 配置项 ===
+    // === 核心配置 ===
     const CONFIG = {
-        smoothSpeed: 0.1,    // 平滑系数 (0.01-1.0)，越小越稳，越大越快
-        rotateSpeed: 3.0,    // 旋转灵敏度
-        zoomSpeed: 2.0       // 缩放灵敏度
+        detectFPS: 15,       // [关键] Android 优化核心：限制手势识别帧率，给 AR 留出算力
+        smoothSpeed: 0.15,   // 平滑系数
+        moveSensitivity: 2.5 // 交互灵敏度
     };
 
-    // DOM 引用
+    // DOM 元素
+    const loaderOverlay = document.getElementById('loader-overlay');
+    const loadingMsg = document.getElementById('loading-msg');
     const statusPill = document.getElementById('status-pill');
     const scanBox = document.getElementById('scan-box');
-    const targetEntity = document.getElementById('target-entity');
     const modelWrapper = document.getElementById('model-wrapper');
     const sceneEl = document.querySelector('a-scene');
 
-    // 状态变量
+    // 状态
     let isArReady = false;
     let isTargetFound = false;
-    
-    // 交互逻辑变量
     let isPinching = false;
-    let startPinchPos = { x: 0, y: 0 }; // 捏合开始时的手部坐标
     
-    // 目标值 (Target) vs 当前值 (Current) -> 用于平滑动画
-    let targetState = {
-        scale: 0.5,      // 目标缩放
-        rotationY: 0     // 目标Y轴旋转
-    };
-    let currentState = {
-        scale: 0.5,
-        rotationY: 0
-    };
+    // 交互变量
+    let startPinch = { x: 0, y: 0 };
+    let initialModel = { scale: 0.5, rotateY: 0 };
+    let targetModel = { scale: 0.5, rotateY: 0 };
+    let currentModel = { scale: 0.5, rotateY: 0 };
 
-    // 保存按下时的初始状态
-    let initialInteractionState = {
-        scale: 0.5,
-        rotationY: 0
-    };
-
-    // === 1. MindAR 事件监听 ===
+    // === 1. 初始化流程 ===
+    
+    // 监听 AR 准备就绪
     sceneEl.addEventListener("arReady", () => {
         isArReady = true;
-        statusPill.innerText = "请扫描识别图";
-        setupMediaPipe(); // AR准备好后再启动摄像头分析
+        loadingMsg.innerText = "正在加载 AI 模型...";
+        setupMediaPipe(); // AR 视频流准备好后，才加载 MediaPipe
     });
 
+    // 监听识别事件
+    const targetEntity = document.getElementById('target-entity');
     targetEntity.addEventListener("targetFound", () => {
         isTargetFound = true;
         scanBox.classList.add('hidden');
+        statusPill.classList.remove('hidden');
         statusPill.innerText = "识别成功！🖐 捏合手指控制";
-        statusPill.style.borderColor = "#00ff88";
+        statusPill.style.color = "#00ff88";
     });
-
     targetEntity.addEventListener("targetLost", () => {
         isTargetFound = false;
         scanBox.classList.remove('hidden');
         statusPill.innerText = "请对准识别图";
-        statusPill.style.borderColor = "#fff";
-        isPinching = false; // 丢失目标时重置交互
+        statusPill.style.color = "#fff";
+        isPinching = false;
     });
 
-    // === 2. 渲染循环 (A-Frame Tick) ===
-    // 这一步是“稳”的关键：每一帧都在做平滑插值，而不是直接设置
-    AFRAME.registerComponent('smooth-controller', {
-        tick: function (time, timeDelta) {
-            if (!isTargetFound) return;
-
-            // --- 核心算法：Lerp (线性插值) ---
-            // 公式：当前值 = 当前值 + (目标值 - 当前值) * 系数
-            
-            // 1. 平滑缩放
-            currentState.scale += (targetState.scale - currentState.scale) * CONFIG.smoothSpeed;
-            // 限制一下最小最大缩放，防止缩没了
-            if (currentState.scale < 0.1) currentState.scale = 0.1;
-            if (currentState.scale > 3.0) currentState.scale = 3.0;
-
-            // 2. 平滑旋转
-            currentState.rotationY += (targetState.rotationY - currentState.rotationY) * CONFIG.smoothSpeed;
-
-            // 3. 应用到 3D 物体
-            const el = modelWrapper.object3D;
-            el.scale.set(currentState.scale, currentState.scale, currentState.scale);
-            
-            // MindAR 的 Y 轴通常是垂直于图片的，这里根据实际模型轴向可能需要调整
-            // 这里我们控制 Z 轴旋转(平面旋转) 或 Y 轴(立柱旋转)，取决于模型朝向
-            el.rotation.y = currentState.rotationY; 
-        }
-    });
-    sceneEl.setAttribute('smooth-controller', '');
-
-
-    // === 3. MediaPipe 逻辑 ===
+    // === 2. MediaPipe 设置 (Android 兼容性修正) ===
     function setupMediaPipe() {
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
         
-        // 降低模型复杂度以提升 AR 帧率
         hands.setOptions({
             maxNumHands: 1,
-            modelComplexity: 0, 
+            modelComplexity: 0, // 0 = 最快/精度最低 (Android 必须选这个)
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
 
-        hands.onResults(handleHandResults);
+        hands.onResults(onHandResults);
 
-        // 获取 AR 视频流
+        // 启动安全检查循环，寻找视频流
+        waitForVideoReady(hands);
+    }
+
+    // [关键修复]：等待视频流完全准备好
+    function waitForVideoReady(hands) {
         const video = document.querySelector('video');
-        if (video) {
-            startPredictionLoop(video, hands);
+        
+        // 检查视频是否存在，且有宽度（说明已解码第一帧）
+        if (video && video.readyState >= 2 && video.videoWidth > 0) {
+            loadingMsg.innerText = "启动完成";
+            
+            // 延迟一点点让 UI 消失更自然
+            setTimeout(() => {
+                loaderOverlay.style.opacity = '0';
+                setTimeout(() => loaderOverlay.style.display = 'none', 500);
+                statusPill.classList.remove('hidden');
+            }, 1000);
+
+            // 启动 AI 循环
+            startThrottledLoop(video, hands);
+        } else {
+            // 如果没准备好，继续等
+            requestAnimationFrame(() => waitForVideoReady(hands));
         }
     }
 
-    async function startPredictionLoop(video, hands) {
-        async function step() {
-            // 只有当目标被发现时才检测手势，节省性能
-            if (isTargetFound && video.readyState >= 2) {
-                await hands.send({image: video});
+    // [关键修复]：节流循环 (Throttle)
+    function startThrottledLoop(video, hands) {
+        let lastTime = 0;
+        const interval = 1000 / CONFIG.detectFPS; // 计算每帧最小间隔
+
+        async function loop(timestamp) {
+            // 只有当时间间隔足够，且识别图被找到时，才跑 AI
+            // 这样 Android 就不会卡死
+            if (timestamp - lastTime >= interval && isTargetFound) {
+                lastTime = timestamp;
+                try {
+                    await hands.send({image: video});
+                } catch (e) {
+                    console.error("AI Error:", e);
+                }
             }
-            requestAnimationFrame(step);
+            requestAnimationFrame(loop);
         }
-        step();
+        loop(0);
     }
 
-    function handleHandResults(results) {
+    // === 3. 手势逻辑处理 ===
+    function onHandResults(results) {
         if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-            // 如果手移开了，取消捏合状态
-            isPinching = false; 
+            isPinching = false;
             return;
         }
 
-        const landmarks = results.multiHandLandmarks[0];
-        const thumb = landmarks[4];
-        const index = landmarks[8];
+        const lm = results.multiHandLandmarks[0];
+        const thumb = lm[4];
+        const index = lm[8];
 
-        // 计算捏合距离
-        const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-        const threshold = 0.08;
+        // 捏合距离
+        const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
 
-        if (pinchDist < threshold) {
-            // === 状态：正在捏合 ===
-            
+        if (dist < 0.08) {
             if (!isPinching) {
-                // -> 刚开始捏合的一瞬间 (On Pinch Start)
+                // 开始捏合
                 isPinching = true;
+                startPinch = { x: index.x, y: index.y };
+                initialModel = { ...targetModel }; // 记录当前状态
                 
-                // 1. 记录手的位置
-                startPinchPos = { x: index.x, y: index.y };
-                
-                // 2. 记录模型当前的状态
-                initialInteractionState.scale = targetState.scale;
-                initialInteractionState.rotationY = targetState.rotationY;
-
-                statusPill.innerText = "✊ 已锁定：上下拖拽=缩放，左右=旋转";
+                statusPill.innerText = "✊ 拖拽：上下缩放 / 左右旋转";
                 statusPill.style.color = "#FFD700";
             } else {
-                // -> 保持捏合并移动 (On Drag)
-                
-                // 计算偏移量 (Delta)
-                // index.x 是 0-1 之间的小数
-                const deltaX = index.x - startPinchPos.x; 
-                const deltaY = index.y - startPinchPos.y; 
+                // 拖动中
+                const deltaX = index.x - startPinch.x;
+                const deltaY = index.y - startPinch.y;
 
-                // --- 逻辑修正：增量控制 ---
-                
-                // 控制旋转 (左右拖动)
-                // 乘以系数 amplify 效果
-                targetState.rotationY = initialInteractionState.rotationY + (deltaX * CONFIG.rotateSpeed);
+                // 左右拖动 -> 旋转 (deltaX * 灵敏度)
+                targetModel.rotateY = initialModel.rotateY + (deltaX * CONFIG.moveSensitivity * 2);
 
-                // 控制缩放 (上下拖动)
-                // 注意：屏幕坐标 y 向下是变大。
-                // 我们希望：手指向上推(y变小) -> 变大(拉近)；手指向下拉(y变大) -> 变小(推远)
-                // 所以是 -deltaY
-                targetState.scale = initialInteractionState.scale + (deltaY * -1 * CONFIG.zoomSpeed);
+                // 上下拖动 -> 缩放 
+                // 屏幕上y是0，下是1。手往上(y变小) = 放大。所以是 -deltaY
+                targetModel.scale = initialModel.scale + (-deltaY * CONFIG.moveSensitivity);
+                
+                // 限制缩放范围
+                targetModel.scale = Math.max(0.2, Math.min(3.0, targetModel.scale));
             }
-
         } else {
-            // === 状态：松开 ===
             if (isPinching) {
                 isPinching = false;
                 statusPill.innerText = "识别成功！🖐 捏合手指控制";
-                statusPill.style.color = "#FFF";
+                statusPill.style.color = "#00ff88";
+                
+                // 松开时，同步初始状态，防止下次点击跳变
+                initialModel = { ...targetModel };
             }
         }
     }
+
+    // === 4. 渲染平滑器 (始终运行) ===
+    AFRAME.registerComponent('smooth-controller', {
+        tick: function() {
+            if (!isTargetFound) return;
+
+            // Lerp 插值算法：让运动变平滑，过滤手抖
+            currentModel.scale += (targetModel.scale - currentModel.scale) * CONFIG.smoothSpeed;
+            currentModel.rotateY += (targetModel.rotateY - currentModel.rotateY) * CONFIG.smoothSpeed;
+
+            // 应用到 A-Frame 对象
+            const mesh = modelWrapper.object3D;
+            mesh.scale.set(currentModel.scale, currentModel.scale, currentModel.scale);
+            
+            // MindAR 的坐标系中，模型通常需要绕 Y 轴或 Z 轴旋转，视图片方向而定
+            // 这里我们设置 Y 轴旋转
+            mesh.rotation.y = currentModel.rotateY;
+        }
+    });
+    sceneEl.setAttribute('smooth-controller', '');
 
 </script>
 </body>

@@ -3,281 +3,221 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR 展台 - 安卓优化版</title>
-
-    <!-- 1. 核心库 -->
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    <title>WebAR 后置摄像头手势交互</title>
+    
+    <!-- 依赖库 -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
     <style>
-        body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
         
-        /* === 加载层 (Loading) === */
-        #loader-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: #000;
-            z-index: 9999;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            transition: opacity 0.5s ease;
+        #container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+
+        /* 
+           【修改点 1】CSS 样式 
+           后置摄像头看到的必须是真实世界的方向，
+           所以去掉了 transform: scaleX(-1)
+        */
+        video {
+            position: absolute;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            /* transform: scaleX(-1);  <-- 这一行删掉了 */
         }
-        .spinner {
-            width: 50px; height: 50px;
-            border: 5px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top-color: #00ff88;
-            animation: spin 1s ease-in-out infinite;
+
+        #three-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 2;
         }
-        .loading-text {
-            color: white; margin-top: 20px; font-size: 16px; letter-spacing: 1px;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        
-        /* === 状态 UI === */
+
         #ui-layer {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; z-index: 10;
-        }
-        #status-pill {
-            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.6); color: #fff;
-            padding: 8px 24px; border-radius: 30px;
-            font-size: 14px; border: 1px solid rgba(255,255,255,0.2);
-            white-space: nowrap;
+            position: absolute;
+            top: 20px; width: 100%;
+            text-align: center;
+            z-index: 10;
+            pointer-events: none;
         }
         
-        /* 扫描框 */
-        #scan-box {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 60vw; height: 60vw;
-            border: 2px dashed rgba(255, 255, 255, 0.5); border-radius: 12px;
-            box-shadow: 0 0 0 2000px rgba(0,0,0,0.5); /* 黑色遮罩 */
+        .status-badge {
+            background: rgba(0, 0, 0, 0.6);
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            border: 1px solid rgba(255,255,255,0.3);
+            backdrop-filter: blur(4px);
         }
-        
-        .hidden { opacity: 0; pointer-events: none; }
     </style>
 </head>
 <body>
 
-    <!-- Loading 遮罩 -->
-    <div id="loader-overlay">
-        <div class="spinner"></div>
-        <div class="loading-text" id="loading-msg">启动 AR 引擎...</div>
-    </div>
-
-    <!-- UI 层 -->
+<div id="container">
+    <video id="input_video" playsinline></video>
+    <canvas id="three-canvas"></canvas>
+    
     <div id="ui-layer">
-        <div id="status-pill" class="hidden">请扫描识别图</div>
-        <div id="scan-box"></div>
+        <div id="status-box" class="status-badge">正在调用后置镜头...</div>
     </div>
+</div>
 
-    <!-- MindAR 场景 -->
-    <a-scene 
-        mindar-image="imageTargetSrc: ./card2.mind; uiScanning: no; filterMinCF:0.0001; filterBeta: 0.001;" 
-        color-space="sRGB" 
-        renderer="colorManagement: true, physicallyCorrectLights" 
-        vr-mode-ui="enabled: false" 
-        device-orientation-permission-ui="enabled: false">
+<script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-
-        <!-- 识别目标 -->
-        <a-entity id="target-entity" mindar-image-target="targetIndex: 0">
-            <!-- 模型包裹层 -->
-            <a-entity id="model-wrapper" position="0 0 0" scale="0.5 0.5 0.5">
-                <a-gltf-model 
-                    src="./DamagedHelmet.glb"
-                    position="0 0 0" rotation="90 0 0">
-                </a-gltf-model>
-            </a-entity>
-        </a-entity>
-    </a-scene>
-
-<script>
-    // === 核心配置 ===
+    // === 配置 ===
     const CONFIG = {
-        detectFPS: 15,       // [关键] Android 优化核心：限制手势识别帧率，给 AR 留出算力
-        smoothSpeed: 0.15,   // 平滑系数
-        moveSensitivity: 2.5 // 交互灵敏度
+        cameraZ: 5,
+        smoothFactor: 0.1,  // 平滑系数
+        moveSpeed: 8,       // 移动范围
+        depthScale: 15,     // 深度灵敏度
+        pinchThreshold: 0.06
     };
 
-    // DOM 元素
-    const loaderOverlay = document.getElementById('loader-overlay');
-    const loadingMsg = document.getElementById('loading-msg');
-    const statusPill = document.getElementById('status-pill');
-    const scanBox = document.getElementById('scan-box');
-    const modelWrapper = document.getElementById('model-wrapper');
-    const sceneEl = document.querySelector('a-scene');
+    const videoElement = document.getElementById('input_video');
+    const statusBox = document.getElementById('status-box');
 
-    // 状态
-    let isArReady = false;
-    let isTargetFound = false;
+    // Three.js 变量
+    let scene, camera, renderer, model;
+    
+    // 平滑处理
+    class Smoother {
+        constructor(val, alpha) { this.val = val; this.alpha = alpha; }
+        update(target) { 
+            this.val = this.val * (1 - this.alpha) + target * this.alpha; 
+            return this.val; 
+        }
+    }
+    const sX = new Smoother(0, CONFIG.smoothFactor);
+    const sY = new Smoother(0, CONFIG.smoothFactor);
+    const sZ = new Smoother(0, CONFIG.smoothFactor);
+
     let isPinching = false;
-    
-    // 交互变量
-    let startPinch = { x: 0, y: 0 };
-    let initialModel = { scale: 0.5, rotateY: 0 };
-    let targetModel = { scale: 0.5, rotateY: 0 };
-    let currentModel = { scale: 0.5, rotateY: 0 };
 
-    // === 1. 初始化流程 ===
-    
-    // 监听 AR 准备就绪
-    sceneEl.addEventListener("arReady", () => {
-        isArReady = true;
-        loadingMsg.innerText = "正在加载 AI 模型...";
-        setupMediaPipe(); // AR 视频流准备好后，才加载 MediaPipe
-    });
-
-    // 监听识别事件
-    const targetEntity = document.getElementById('target-entity');
-    targetEntity.addEventListener("targetFound", () => {
-        isTargetFound = true;
-        scanBox.classList.add('hidden');
-        statusPill.classList.remove('hidden');
-        statusPill.innerText = "识别成功！🖐 捏合手指控制";
-        statusPill.style.color = "#00ff88";
-    });
-    targetEntity.addEventListener("targetLost", () => {
-        isTargetFound = false;
-        scanBox.classList.remove('hidden');
-        statusPill.innerText = "请对准识别图";
-        statusPill.style.color = "#fff";
-        isPinching = false;
-    });
-
-    // === 2. MediaPipe 设置 (Android 兼容性修正) ===
-    function setupMediaPipe() {
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    // === 1. 初始化 3D 场景 ===
+    function initThree() {
+        scene = new THREE.Scene();
+        // 增加更亮的环境光，因为真实环境通常比较亮
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+        scene.add(ambientLight);
         
-        hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 0, // 0 = 最快/精度最低 (Android 必须选这个)
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(0, 5, 5);
+        scene.add(dirLight);
+
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = CONFIG.cameraZ;
+
+        renderer = new THREE.WebGLRenderer({ 
+            canvas: document.getElementById('three-canvas'), 
+            alpha: true, 
+            antialias: true 
         });
+        renderer.setSize(window.innerWidth, window.innerHeight);
 
-        hands.onResults(onHandResults);
-
-        // 启动安全检查循环，寻找视频流
-        waitForVideoReady(hands);
-    }
-
-    // [关键修复]：等待视频流完全准备好
-    function waitForVideoReady(hands) {
-        const video = document.querySelector('video');
+        // 加载模型
+        const loader = new GLTFLoader();
+        // 换了一个宇航员模型，感觉更适合 AR
+        const modelUrl = './my-avatar.glb'; 
         
-        // 检查视频是否存在，且有宽度（说明已解码第一帧）
-        if (video && video.readyState >= 2 && video.videoWidth > 0) {
-            loadingMsg.innerText = "启动完成";
-            
-            // 延迟一点点让 UI 消失更自然
-            setTimeout(() => {
-                loaderOverlay.style.opacity = '0';
-                setTimeout(() => loaderOverlay.style.display = 'none', 500);
-                statusPill.classList.remove('hidden');
-            }, 1000);
-
-            // 启动 AI 循环
-            startThrottledLoop(video, hands);
-        } else {
-            // 如果没准备好，继续等
-            requestAnimationFrame(() => waitForVideoReady(hands));
-        }
+        loader.load(modelUrl, (gltf) => {
+            model = gltf.scene;
+            model.scale.set(2, 2, 2); 
+            model.position.y = -1; // 初始位置放低一点
+            scene.add(model);
+            statusBox.innerText = "🖐 请伸出手进行识别";
+            animate();
+        }, undefined, () => statusBox.innerText = "模型加载失败");
     }
 
-    // [关键修复]：节流循环 (Throttle)
-    function startThrottledLoop(video, hands) {
-        let lastTime = 0;
-        const interval = 1000 / CONFIG.detectFPS; // 计算每帧最小间隔
-
-        async function loop(timestamp) {
-            // 只有当时间间隔足够，且识别图被找到时，才跑 AI
-            // 这样 Android 就不会卡死
-            if (timestamp - lastTime >= interval && isTargetFound) {
-                lastTime = timestamp;
-                try {
-                    await hands.send({image: video});
-                } catch (e) {
-                    console.error("AI Error:", e);
-                }
-            }
-            requestAnimationFrame(loop);
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        // 简单的自转动画，让模型没被操作时也在动
+        if (model && !isPinching) {
+            model.rotation.y += 0.01;
         }
-        loop(0);
+        
+        renderer.render(scene, camera);
     }
 
-    // === 3. 手势逻辑处理 ===
-    function onHandResults(results) {
-        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-            isPinching = false;
-            return;
-        }
+    initThree();
 
-        const lm = results.multiHandLandmarks[0];
-        const thumb = lm[4];
-        const index = lm[8];
+    // === 2. MediaPipe 处理 ===
+    function onResults(results) {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            const thumb = landmarks[4];
+            const index = landmarks[8];
+            const wrist = landmarks[0];
+            const middleBase = landmarks[9];
 
-        // 捏合距离
-        const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+            const handSize = Math.hypot(wrist.x - middleBase.x, wrist.y - middleBase.y);
 
-        if (dist < 0.08) {
-            if (!isPinching) {
-                // 开始捏合
+            if (pinchDist < CONFIG.pinchThreshold) {
                 isPinching = true;
-                startPinch = { x: index.x, y: index.y };
-                initialModel = { ...targetModel }; // 记录当前状态
+                statusBox.innerText = "✊ 抓取中";
+                statusBox.style.borderColor = "#0f0";
+
+                // 【修改点 3】坐标映射逻辑
+                // 前置镜头我们需要翻转X (1 - x)，后置镜头直接用 x 即可
+                // MediaPipe: 左=0, 右=1 -> ThreeJS: 左=负, 右=正
                 
-                statusPill.innerText = "✊ 拖拽：上下缩放 / 左右旋转";
-                statusPill.style.color = "#FFD700";
+                let targetX = (index.x - 0.5) * CONFIG.moveSpeed; // 去掉了 1-index.x
+                let targetY = (0.5 - index.y) * (CONFIG.moveSpeed * 0.8);
+                
+                // 深度映射 (Z轴)
+                let targetZ = (handSize - 0.1) * CONFIG.depthScale; 
+
+                // 应用平滑
+                model.position.set(
+                    sX.update(targetX),
+                    sY.update(targetY),
+                    sZ.update(targetZ)
+                );
+
+                // 让模型朝向镜头
+                model.rotation.set(0, 0, 0); 
+
             } else {
-                // 拖动中
-                const deltaX = index.x - startPinch.x;
-                const deltaY = index.y - startPinch.y;
-
-                // 左右拖动 -> 旋转 (deltaX * 灵敏度)
-                targetModel.rotateY = initialModel.rotateY + (deltaX * CONFIG.moveSensitivity * 2);
-
-                // 上下拖动 -> 缩放 
-                // 屏幕上y是0，下是1。手往上(y变小) = 放大。所以是 -deltaY
-                targetModel.scale = initialModel.scale + (-deltaY * CONFIG.moveSensitivity);
-                
-                // 限制缩放范围
-                targetModel.scale = Math.max(0.2, Math.min(3.0, targetModel.scale));
-            }
-        } else {
-            if (isPinching) {
                 isPinching = false;
-                statusPill.innerText = "识别成功！🖐 捏合手指控制";
-                statusPill.style.color = "#00ff88";
-                
-                // 松开时，同步初始状态，防止下次点击跳变
-                initialModel = { ...targetModel };
+                statusBox.innerText = "🖐 松开状态";
+                statusBox.style.borderColor = "#fff";
             }
         }
     }
 
-    // === 4. 渲染平滑器 (始终运行) ===
-    AFRAME.registerComponent('smooth-controller', {
-        tick: function() {
-            if (!isTargetFound) return;
-
-            // Lerp 插值算法：让运动变平滑，过滤手抖
-            currentModel.scale += (targetModel.scale - currentModel.scale) * CONFIG.smoothSpeed;
-            currentModel.rotateY += (targetModel.rotateY - currentModel.rotateY) * CONFIG.smoothSpeed;
-
-            // 应用到 A-Frame 对象
-            const mesh = modelWrapper.object3D;
-            mesh.scale.set(currentModel.scale, currentModel.scale, currentModel.scale);
-            
-            // MindAR 的坐标系中，模型通常需要绕 Y 轴或 Z 轴旋转，视图片方向而定
-            // 这里我们设置 Y 轴旋转
-            mesh.rotation.y = currentModel.rotateY;
-        }
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
     });
-    sceneEl.setAttribute('smooth-controller', '');
+    hands.onResults(onResults);
+
+    // === 3. 启动摄像头（后置） ===
+    const cameraUtils = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280,
+        height: 720,
+        // 【修改点 2】关键参数：使用 environment 代表后置摄像头
+        facingMode: "environment" 
+    });
+    cameraUtils.start();
 
 </script>
 </body>

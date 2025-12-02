@@ -3,221 +3,214 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>WebAR 后置摄像头手势交互</title>
-    
-    <!-- 依赖库 -->
+    <title>展台AR：扫描+手势交互</title>
+
+    <!-- 1. A-Frame 框架 -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <!-- 2. MindAR (用于图像追踪) -->
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    <!-- 3. MediaPipe (用于手势识别) -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
-
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; }
         
-        #container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
-
-        /* 
-           【修改点 1】CSS 样式 
-           后置摄像头看到的必须是真实世界的方向，
-           所以去掉了 transform: scaleX(-1)
-        */
-        video {
-            position: absolute;
-            width: 100%; height: 100%;
-            object-fit: cover;
-            /* transform: scaleX(-1);  <-- 这一行删掉了 */
-        }
-
-        #three-canvas {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            z-index: 2;
-        }
-
+        /* UI 层 */
         #ui-layer {
             position: absolute;
-            top: 20px; width: 100%;
-            text-align: center;
-            z-index: 10;
+            top: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #status-bar {
+            margin-top: 20px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-family: sans-serif;
+            border: 1px solid rgba(255,255,255,0.3);
+            text-align: center;
+        }
+
+        #scan-guide {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70vw; height: 70vw;
+            border: 2px dashed rgba(255, 255, 255, 0.5);
+            border-radius: 20px;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); /* 遮罩效果 */
         }
         
-        .status-badge {
-            background: rgba(0, 0, 0, 0.6);
-            color: #fff;
-            padding: 8px 20px;
-            border-radius: 30px;
-            font-size: 14px;
-            border: 1px solid rgba(255,255,255,0.3);
-            backdrop-filter: blur(4px);
-        }
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
 
-<div id="container">
-    <video id="input_video" playsinline></video>
-    <canvas id="three-canvas"></canvas>
-    
     <div id="ui-layer">
-        <div id="status-box" class="status-badge">正在调用后置镜头...</div>
+        <div id="status-bar">初始化 AR 引擎...</div>
+        <div id="scan-guide">
+            <div style="text-align:center; color:white; margin-top:110%;">请扫描识别图</div>
+        </div>
     </div>
-</div>
 
-<script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    <!-- 
+      MindAR 场景配置 
+      imageTargetSrc: 这里是识别图的编译文件 (.mind)。
+      默认使用 MindAR 官方示例卡片。
+    -->
+    <a-scene 
+        mindar-image="imageTargetSrc: ./targets.mind; uiScanning: no;" 
+        color-space="sRGB" 
+        renderer="colorManagement: true, physicallyCorrectLights" 
+        vr-mode-ui="enabled: false" 
+        device-orientation-permission-ui="enabled: false">
 
-    // === 配置 ===
-    const CONFIG = {
-        cameraZ: 5,
-        smoothFactor: 0.1,  // 平滑系数
-        moveSpeed: 8,       // 移动范围
-        depthScale: 15,     // 深度灵敏度
-        pinchThreshold: 0.06
-    };
+        <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-    const videoElement = document.getElementById('input_video');
-    const statusBox = document.getElementById('status-box');
+        <!-- 图像识别目标 (targetIndex: 0 代表第一个识别图) -->
+        <a-entity id="target-entity" mindar-image-target="targetIndex: 0">
+            
+            <!-- 这里放你的模型 -->
+            <!-- 使用 glb 模型，并设置初始大小和位置 -->
+            <a-gltf-model 
+                id="ar-model" 
+                rotation="0 0 0" 
+                position="0 0 0" 
+                scale="0.5 0.5 0.5" 
+                src="./my-avatar.glb"
+                animation="property: rotation; to: 0 360 0; loop: true; dur: 10000; easing: linear; enabled: false"> <!-- 默认不旋转，捏合时我们手动控制 -->
+            </a-gltf-model>
 
-    // Three.js 变量
-    let scene, camera, renderer, model;
-    
-    // 平滑处理
-    class Smoother {
-        constructor(val, alpha) { this.val = val; this.alpha = alpha; }
-        update(target) { 
-            this.val = this.val * (1 - this.alpha) + target * this.alpha; 
-            return this.val; 
-        }
-    }
-    const sX = new Smoother(0, CONFIG.smoothFactor);
-    const sY = new Smoother(0, CONFIG.smoothFactor);
-    const sZ = new Smoother(0, CONFIG.smoothFactor);
+        </a-entity>
+    </a-scene>
 
+<script>
+    const statusBar = document.getElementById('status-bar');
+    const scanGuide = document.getElementById('scan-guide');
+    const sceneEl = document.querySelector('a-scene');
+    const arModel = document.getElementById('ar-model');
+    const targetEntity = document.getElementById('target-entity');
+
+    let isModelVisible = false;
     let isPinching = false;
+    
+    // 平滑参数
+    let targetScale = 0.5;
+    let currentScale = 0.5;
+    let lastPinchDist = 0;
 
-    // === 1. 初始化 3D 场景 ===
-    function initThree() {
-        scene = new THREE.Scene();
-        // 增加更亮的环境光，因为真实环境通常比较亮
-        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
-        scene.add(ambientLight);
+    // === 1. 监听 AR 事件 ===
+    
+    // 当识别到物体时
+    targetEntity.addEventListener("targetFound", event => {
+        console.log("识别成功！");
+        statusBar.innerText = "识别成功！🖐 请捏合手指控制模型";
+        scanGuide.classList.add('hidden'); // 隐藏扫描框
+        isModelVisible = true;
+    });
+
+    // 当丢失物体时
+    targetEntity.addEventListener("targetLost", event => {
+        console.log("目标丢失");
+        statusBar.innerText = "请对准识别物体";
+        scanGuide.classList.remove('hidden');
+        isModelVisible = false;
+    });
+
+    // === 2. MediaPipe 初始化 ===
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 0, // 设为0以提高性能，因为同时运行AR很吃资源
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    // === 3. 关键：连接 MindAR 视频流与 MediaPipe ===
+    sceneEl.addEventListener("arReady", (event) => {
+        console.log("AR 系统就绪");
+        statusBar.innerText = "正在启动 AI 手势识别...";
         
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        dirLight.position.set(0, 5, 5);
-        scene.add(dirLight);
-
-        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.z = CONFIG.cameraZ;
-
-        renderer = new THREE.WebGLRenderer({ 
-            canvas: document.getElementById('three-canvas'), 
-            alpha: true, 
-            antialias: true 
-        });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-
-        // 加载模型
-        const loader = new GLTFLoader();
-        // 换了一个宇航员模型，感觉更适合 AR
-        const modelUrl = './my-avatar.glb'; 
+        // MindAR 会创建一个 video 标签，我们需要找到它
+        const videoElement = document.querySelector('video');
         
-        loader.load(modelUrl, (gltf) => {
-            model = gltf.scene;
-            model.scale.set(2, 2, 2); 
-            model.position.y = -1; // 初始位置放低一点
-            scene.add(model);
-            statusBox.innerText = "🖐 请伸出手进行识别";
-            animate();
-        }, undefined, () => statusBox.innerText = "模型加载失败");
-    }
-
-    function animate() {
-        requestAnimationFrame(animate);
-        
-        // 简单的自转动画，让模型没被操作时也在动
-        if (model && !isPinching) {
-            model.rotation.y += 0.01;
+        if (videoElement) {
+            // 开始循环检测
+            startDetectionLoop(videoElement);
+        } else {
+            console.error("未找到 Video 元素");
         }
-        
-        renderer.render(scene, camera);
+    });
+
+    async function startDetectionLoop(video) {
+        async function frame() {
+            // 只有当视频在播放且模型可见时，才进行繁重的 AI 计算
+            if (video.readyState >= 2 && isModelVisible) {
+                await hands.send({image: video});
+            }
+            requestAnimationFrame(frame);
+        }
+        frame();
     }
 
-    initThree();
-
-    // === 2. MediaPipe 处理 ===
+    // === 4. 手势交互逻辑 ===
     function onResults(results) {
+        if (!isModelVisible) return; // 如果模型没出来，不处理手势
+
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             const landmarks = results.multiHandLandmarks[0];
             const thumb = landmarks[4];
             const index = landmarks[8];
-            const wrist = landmarks[0];
-            const middleBase = landmarks[9];
 
-            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-            const handSize = Math.hypot(wrist.x - middleBase.x, wrist.y - middleBase.y);
+            // 计算捏合距离
+            const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
 
-            if (pinchDist < CONFIG.pinchThreshold) {
-                isPinching = true;
-                statusBox.innerText = "✊ 抓取中";
-                statusBox.style.borderColor = "#0f0";
+            // 捏合判断阈值
+            if (dist < 0.08) {
+                if (!isPinching) {
+                    // 刚开始捏合，记录初始状态，防止跳变
+                    isPinching = true;
+                    statusBar.innerText = "✊ 交互中 (旋转/缩放)";
+                    statusBar.style.color = "#FFD700";
+                }
 
-                // 【修改点 3】坐标映射逻辑
-                // 前置镜头我们需要翻转X (1 - x)，后置镜头直接用 x 即可
-                // MediaPipe: 左=0, 右=1 -> ThreeJS: 左=负, 右=正
+                // --- 交互逻辑 A: 旋转模型 ---
+                // 根据食指的 X 坐标移动来旋转模型
+                // 简单的映射：手指在屏幕左边 -> 向左转，手指在右边 -> 向右转
+                const rotationY = (index.x - 0.5) * 180; // -90 到 90 度
                 
-                let targetX = (index.x - 0.5) * CONFIG.moveSpeed; // 去掉了 1-index.x
-                let targetY = (0.5 - index.y) * (CONFIG.moveSpeed * 0.8);
+                // --- 交互逻辑 B: 缩放模型 (基于手掌大小或捏合深度) ---
+                // 这里演示：根据手在屏幕上的高度(y)来控制缩放 (上滑放大，下滑缩小)
+                const scaleFactor = (1 - index.y) + 0.2; // 0.2 ~ 1.2
                 
-                // 深度映射 (Z轴)
-                let targetZ = (handSize - 0.1) * CONFIG.depthScale; 
-
-                // 应用平滑
-                model.position.set(
-                    sX.update(targetX),
-                    sY.update(targetY),
-                    sZ.update(targetZ)
-                );
-
-                // 让模型朝向镜头
-                model.rotation.set(0, 0, 0); 
+                // 平滑处理
+                const object3D = arModel.object3D;
+                
+                // 旋转平滑
+                object3D.rotation.y += (THREE.MathUtils.degToRad(rotationY) - object3D.rotation.y) * 0.1;
+                
+                // 缩放平滑
+                targetScale = scaleFactor;
+                currentScale = currentScale * 0.9 + targetScale * 0.1;
+                object3D.scale.set(currentScale, currentScale, currentScale);
 
             } else {
                 isPinching = false;
-                statusBox.innerText = "🖐 松开状态";
-                statusBox.style.borderColor = "#fff";
+                statusBar.innerText = "🖐 识别成功 (捏合以控制)";
+                statusBar.style.color = "#FFF";
             }
         }
     }
-
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-    });
-    hands.onResults(onResults);
-
-    // === 3. 启动摄像头（后置） ===
-    const cameraUtils = new Camera(videoElement, {
-        onFrame: async () => { await hands.send({image: videoElement}); },
-        width: 1280,
-        height: 720,
-        // 【修改点 2】关键参数：使用 environment 代表后置摄像头
-        facingMode: "environment" 
-    });
-    cameraUtils.start();
 
 </script>
 </body>

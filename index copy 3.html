@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebAR 后置摄像头手势交互</title>
+    
+    <!-- 依赖库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        
+        #container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+
+        /* 
+           【修改点 1】CSS 样式 
+           后置摄像头看到的必须是真实世界的方向，
+           所以去掉了 transform: scaleX(-1)
+        */
+        video {
+            position: absolute;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            /* transform: scaleX(-1);  <-- 这一行删掉了 */
+        }
+
+        #three-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 2;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px; width: 100%;
+            text-align: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+        
+        .status-badge {
+            background: rgba(0, 0, 0, 0.6);
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            border: 1px solid rgba(255,255,255,0.3);
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <video id="input_video" playsinline></video>
+    <canvas id="three-canvas"></canvas>
+    
+    <div id="ui-layer">
+        <div id="status-box" class="status-badge">正在调用后置镜头...</div>
+    </div>
+</div>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // === 配置 ===
+    const CONFIG = {
+        cameraZ: 5,
+        smoothFactor: 0.1,  // 平滑系数
+        moveSpeed: 8,       // 移动范围
+        depthScale: 15,     // 深度灵敏度
+        pinchThreshold: 0.06
+    };
+
+    const videoElement = document.getElementById('input_video');
+    const statusBox = document.getElementById('status-box');
+
+    // Three.js 变量
+    let scene, camera, renderer, model;
+    
+    // 平滑处理
+    class Smoother {
+        constructor(val, alpha) { this.val = val; this.alpha = alpha; }
+        update(target) { 
+            this.val = this.val * (1 - this.alpha) + target * this.alpha; 
+            return this.val; 
+        }
+    }
+    const sX = new Smoother(0, CONFIG.smoothFactor);
+    const sY = new Smoother(0, CONFIG.smoothFactor);
+    const sZ = new Smoother(0, CONFIG.smoothFactor);
+
+    let isPinching = false;
+
+    // === 1. 初始化 3D 场景 ===
+    function initThree() {
+        scene = new THREE.Scene();
+        // 增加更亮的环境光，因为真实环境通常比较亮
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(0, 5, 5);
+        scene.add(dirLight);
+
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = CONFIG.cameraZ;
+
+        renderer = new THREE.WebGLRenderer({ 
+            canvas: document.getElementById('three-canvas'), 
+            alpha: true, 
+            antialias: true 
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        // 加载模型
+        const loader = new GLTFLoader();
+        // 换了一个宇航员模型，感觉更适合 AR
+        const modelUrl = './my-avatar.glb'; 
+        
+        loader.load(modelUrl, (gltf) => {
+            model = gltf.scene;
+            model.scale.set(2, 2, 2); 
+            model.position.y = -1; // 初始位置放低一点
+            scene.add(model);
+            statusBox.innerText = "🖐 请伸出手进行识别";
+            animate();
+        }, undefined, () => statusBox.innerText = "模型加载失败");
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        // 简单的自转动画，让模型没被操作时也在动
+        if (model && !isPinching) {
+            model.rotation.y += 0.01;
+        }
+        
+        renderer.render(scene, camera);
+    }
+
+    initThree();
+
+    // === 2. MediaPipe 处理 ===
+    function onResults(results) {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            const thumb = landmarks[4];
+            const index = landmarks[8];
+            const wrist = landmarks[0];
+            const middleBase = landmarks[9];
+
+            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+            const handSize = Math.hypot(wrist.x - middleBase.x, wrist.y - middleBase.y);
+
+            if (pinchDist < CONFIG.pinchThreshold) {
+                isPinching = true;
+                statusBox.innerText = "✊ 抓取中";
+                statusBox.style.borderColor = "#0f0";
+
+                // 【修改点 3】坐标映射逻辑
+                // 前置镜头我们需要翻转X (1 - x)，后置镜头直接用 x 即可
+                // MediaPipe: 左=0, 右=1 -> ThreeJS: 左=负, 右=正
+                
+                let targetX = (index.x - 0.5) * CONFIG.moveSpeed; // 去掉了 1-index.x
+                let targetY = (0.5 - index.y) * (CONFIG.moveSpeed * 0.8);
+                
+                // 深度映射 (Z轴)
+                let targetZ = (handSize - 0.1) * CONFIG.depthScale; 
+
+                // 应用平滑
+                model.position.set(
+                    sX.update(targetX),
+                    sY.update(targetY),
+                    sZ.update(targetZ)
+                );
+
+                // 让模型朝向镜头
+                model.rotation.set(0, 0, 0); 
+
+            } else {
+                isPinching = false;
+                statusBox.innerText = "🖐 松开状态";
+                statusBox.style.borderColor = "#fff";
+            }
+        }
+    }
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+    hands.onResults(onResults);
+
+    // === 3. 启动摄像头（后置） ===
+    const cameraUtils = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280,
+        height: 720,
+        // 【修改点 2】关键参数：使用 environment 代表后置摄像头
+        facingMode: "environment" 
+    });
+    cameraUtils.start();
+
+</script>
+</body>
+</html>

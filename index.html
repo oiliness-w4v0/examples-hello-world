@@ -3,284 +3,307 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR 展台 - 安卓修复版</title>
+    <title>虚拟空间展示 - 无标记版</title>
 
-    <!-- 0. 引入 vConsole (手机端调试神器) -->
-    <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
-    <script>
-        // 初始化调试面板，如果你看到屏幕右下角有个绿色按钮，点开能看报错
-        var vConsole = new VConsole(); 
-        console.log("vConsole 初始化完成");
+    <!-- 1. Three.js 核心 -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
     </script>
-
-    <!-- 1. 核心库 -->
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    
+    <!-- 2. MediaPipe (用于手势) -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         
-        /* 启动按钮层 (强制用户点击，解决安卓自动播放策略问题) */
+        /* 视频背景层 */
+        #bg-video {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover; z-index: 0;
+            /* 后置摄像头不需要镜像，如果是前置需要 scaleX(-1) */
+        }
+
+        /* 3D 渲染层 */
+        #three-canvas {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1; pointer-events: none; /* 让点击穿透 */
+        }
+
+        /* 启动/权限层 */
         #start-layer {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); z-index: 9999;
-            display: flex; justify-content: center; align-items: center; flex-direction: column;
+            background: rgba(0,0,0,0.85); z-index: 999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; color: white;
         }
-        #start-btn {
-            padding: 15px 40px; font-size: 20px; color: white; background: #00aaff;
-            border: none; border-radius: 50px; margin-top: 20px;
+        #enter-btn {
+            margin-top: 20px; padding: 12px 30px; border-radius: 30px;
+            background: #00ff88; color: #000; font-weight: bold; border: none; font-size: 16px;
         }
-
-        /* 状态条 */
+        
+        /* 状态提示 */
         #status-bar {
-            position: fixed; top: 10px; left: 0; width: 100%; 
-            text-align: center; color: yellow; z-index: 100;
+            position: fixed; top: 20px; width: 100%; text-align: center;
+            color: rgba(255,255,255,0.8); z-index: 100; font-size: 14px;
             text-shadow: 1px 1px 2px black; pointer-events: none;
         }
-
-        /* 辅助 Canvas，设为不可见 */
-        #input-canvas {
-            display: none; 
-        }
+        
+        /* Canvas 中转 (安卓兼容) */
+        #input-canvas { display: none; }
     </style>
 </head>
 <body>
 
     <!-- 启动层 -->
     <div id="start-layer">
-        <div style="color:white; margin-bottom: 20px;">AR 展台交互体验</div>
-        <button id="start-btn">点击开始 (安卓必点)</button>
-        <div style="color:#aaa; font-size:12px; margin-top:10px;" id="console-log">等待操作...</div>
+        <h2>🏛️ 沉浸式展台</h2>
+        <p style="opacity: 0.7; font-size: 14px; padding: 0 20px; text-align: center;">
+            无需扫描，点击按钮即可在空间中看到文物
+        </p>
+        <button id="enter-btn">开启空间 (获取权限)</button>
     </div>
 
     <div id="status-bar">准备中...</div>
 
-    <!-- 中转用的 Canvas -->
+    <!-- 核心元素 -->
+    <video id="bg-video" playsinline webkit-playsinline muted autoplay></video>
     <canvas id="input-canvas"></canvas>
+    <canvas id="three-canvas"></canvas>
 
-    <!-- MindAR 场景 -->
-    <a-scene 
-        mindar-image="imageTargetSrc: ./card2.mind; uiScanning: no; filterMinCF:0.0001; filterBeta: 0.001;" 
-        color-space="sRGB" 
-        renderer="colorManagement: true, physicallyCorrectLights" 
-        vr-mode-ui="enabled: false" 
-        device-orientation-permission-ui="enabled: false">
+<script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { DeviceOrientationControls } from 'three/addons/controls/DeviceOrientationControls.js';
 
-        <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    // === 配置 ===
+    const CONFIG = {
+        distance: 2.5,  // 模型距离摄像头的距离 (米)
+        scale: 0.8,     // 模型初始大小
+        fps: 15         // 手势识别帧率 (省电)
+    };
 
-        <a-entity id="target-entity" mindar-image-target="targetIndex: 0">
-            <a-entity id="model-wrapper" position="0 0 0" scale="0.5 0.5 0.5">
-                <a-gltf-model 
-                    src="./DamagedHelmet.glb"
-                    position="0 0 0" rotation="90 0 0">
-                </a-gltf-model>
-            </a-entity>
-        </a-entity>
-    </a-scene>
-
-<script>
-    // === 变量定义 ===
-    const statusBar = document.getElementById('status-bar');
-    const startLayer = document.getElementById('start-layer');
-    const startBtn = document.getElementById('start-btn');
+    // DOM
+    const videoEl = document.getElementById('bg-video');
     const inputCanvas = document.getElementById('input-canvas');
     const ctx = inputCanvas.getContext('2d');
-    const modelWrapper = document.getElementById('model-wrapper');
-    const logDiv = document.getElementById('console-log');
+    const statusBar = document.getElementById('status-bar');
+    const startLayer = document.getElementById('start-layer');
+    const enterBtn = document.getElementById('enter-btn');
 
-    // 状态
-    let isStarted = false;
-    let isTargetFound = false;
+    // 3D 变量
+    let scene, camera, renderer, model, controls;
+    let isRunning = false;
+
+    // 手势变量
     let isPinching = false;
-    
-    // 平滑参数
-    let targetScale = 0.5;
-    let currentScale = 0.5;
-    let startPinchY = 0;
-    
-    // === 1. 用户点击启动 (解决安卓权限问题) ===
-    startBtn.addEventListener('click', () => {
-        startLayer.style.display = 'none';
-        statusBar.innerText = "正在初始化 AR 引擎...";
-        isStarted = true;
-        // 尝试播放音频或空视频以激活环境（可选）
-    });
+    let startPinch = { x: 0, y: 0 };
+    let initialTransform = { scale: 1, rotY: 0 };
+    let targetTransform = { scale: CONFIG.scale, rotY: 0 };
+    let currentTransform = { scale: CONFIG.scale, rotY: 0 };
 
-    // === 2. MindAR 事件 ===
-    const sceneEl = document.querySelector('a-scene');
-    
-    sceneEl.addEventListener("arReady", () => {
-        console.log("MindAR Ready");
-        statusBar.innerText = "AR 就绪，正在加载手势...";
-        initMediaPipe();
-    });
-
-    sceneEl.addEventListener("arError", (ev) => {
-        console.error("AR Error:", ev);
-        statusBar.innerText = "AR 启动失败，请检查摄像头权限";
-    });
-
-    const targetEntity = document.getElementById('target-entity');
-    targetEntity.addEventListener("targetFound", () => {
-        console.log("Target Found");
-        isTargetFound = true;
-        statusBar.innerText = "识别成功！请把手放在摄像头前";
-    });
-    
-    targetEntity.addEventListener("targetLost", () => {
-        console.log("Target Lost");
-        isTargetFound = false;
-        isPinching = false;
-        statusBar.innerText = "请扫描图片";
-    });
-
-    // === 3. MediaPipe 初始化 ===
-    let hands;
-    
-    function initMediaPipe() {
+    // === 1. 权限与启动流程 ===
+    enterBtn.addEventListener('click', async () => {
         try {
-            hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-            
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 0, // 安卓必须用 0
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-
-            hands.onResults(onHandResults);
-            
-            console.log("MediaPipe initialized");
-            // 开始寻找视频流
-            findVideoAndStart();
-        } catch (e) {
-            console.error("MediaPipe Init Error:", e);
-            statusBar.innerText = "AI 初始化失败";
-        }
-    }
-
-    // === 4. [核心修复] 使用 Canvas 中转视频流 ===
-    function findVideoAndStart() {
-        const video = document.querySelector('video');
-        if (video) {
-            console.log("Video element found:", video);
-            
-            // 确保视频正在播放
-            video.addEventListener('loadeddata', () => {
-                console.log("Video data loaded, size:", video.videoWidth, video.videoHeight);
-                startLoop(video);
-            });
-            
-            // 如果已经加载了
-            if (video.readyState >= 2) {
-                startLoop(video);
-            }
-        } else {
-            console.log("Waiting for video...");
-            requestAnimationFrame(findVideoAndStart);
-        }
-    }
-
-    // 循环检测
-    let lastTime = 0;
-    const FPS = 15; // 限制帧率
-    const interval = 1000 / FPS;
-
-    function startLoop(video) {
-        statusBar.innerText = "系统运行中";
-        
-        async function loop(timestamp) {
-            if (!isStarted) return;
-
-            if (timestamp - lastTime >= interval) {
-                lastTime = timestamp;
-
-                // 只有当有画面尺寸时才处理
-                if (video.videoWidth > 0 && video.videoHeight > 0) {
-                    
-                    // 1. 设置中转 Canvas 尺寸 (只做一次或当尺寸变化时)
-                    if (inputCanvas.width !== video.videoWidth) {
-                        inputCanvas.width = video.videoWidth;
-                        inputCanvas.height = video.videoHeight;
-                    }
-
-                    // 2. [关键步骤] 把视频画到 Canvas 上
-                    // 这一步解耦了 MediaPipe 和 MindAR 对 Video 的争夺
-                    ctx.drawImage(video, 0, 0, inputCanvas.width, inputCanvas.height);
-
-                    // 3. 只有当识别图被找到时，才送去 AI 识别 (节省性能)
-                    if (isTargetFound) {
-                        try {
-                            // 发送 Canvas 而不是 Video
-                            await hands.send({image: inputCanvas});
-                        } catch (err) {
-                            console.error("AI Detect Error:", err);
-                        }
-                    }
+            // iOS 13+ 需要请求 DeviceOrientation 权限
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                const response = await DeviceOrientationEvent.requestPermission();
+                if (response !== 'granted') {
+                    alert("需要传感器权限才能体验空间效果");
+                    return;
                 }
             }
-            requestAnimationFrame(loop);
+            
+            startLayer.style.display = 'none';
+            statusBar.innerText = "正在初始化空间...";
+            
+            // 启动摄像头
+            await startCamera();
+            // 初始化 3D
+            initThree();
+            // 初始化 AI
+            initAI();
+            
+            isRunning = true;
+            
+        } catch (e) {
+            console.error(e);
+            alert("启动失败: " + e.message);
         }
-        loop(0);
+    });
+
+    // === 2. 摄像头逻辑 (后置) ===
+    async function startCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: 'environment', // 后置
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: false
+            });
+            videoEl.srcObject = stream;
+            return new Promise(resolve => {
+                videoEl.onloadedmetadata = () => {
+                    videoEl.play();
+                    resolve();
+                };
+            });
+        } catch (err) {
+            alert("无法调用摄像头，请确保在 HTTPS 环境下");
+            throw err;
+        }
     }
 
-    // === 5. 手势结果处理 ===
-    function onHandResults(results) {
-        // 如果你需要调试，可以取消下面这行的注释，在 vConsole 里看是否有数据输出
-        // console.log("Hand results:", results.multiHandLandmarks.length);
+    // === 3. Three.js 场景构建 ===
+    function initThree() {
+        // 场景
+        scene = new THREE.Scene();
+        // 光照
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        dirLight.position.set(0, 5, 5);
+        scene.add(ambientLight);
+        scene.add(dirLight);
 
+        // 相机
+        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+        
+        // 【关键】使用 DeviceOrientationControls
+        // 这会让 Three.js 的相机跟随手机转动
+        controls = new DeviceOrientationControls(camera);
+
+        // 渲染器
+        renderer = new THREE.WebGLRenderer({
+            canvas: document.getElementById('three-canvas'),
+            alpha: true, // 透明背景，为了透出下面的 video
+            antialias: true
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        // 加载模型
+        const loader = new GLTFLoader();
+        // 替换为你的 GLB 模型地址
+        const modelUrl = './DamagedHelmet.glb';
+        
+        loader.load(modelUrl, (gltf) => {
+            model = gltf.scene;
+            
+            // 初始位置设置在：正前方 (Z负轴)
+            // 注意：我们把模型放进一个 Group 里，方便旋转
+            model.position.set(0, 0, -CONFIG.distance); 
+            
+            scene.add(model);
+            statusBar.innerText = "文物已悬浮，转身看看";
+            animate();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    }
+
+    // 渲染循环
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        // 更新相机控制 (陀螺仪)
+        controls.update();
+
+        if (model) {
+            // 平滑处理手势交互
+            // 缩放
+            currentTransform.scale += (targetTransform.scale - currentTransform.scale) * 0.1;
+            model.scale.set(currentTransform.scale, currentTransform.scale, currentTransform.scale);
+            
+            // 旋转 (这里我们旋转模型本身，而不是相机)
+            currentTransform.rotY += (targetTransform.rotY - currentTransform.rotY) * 0.1;
+            model.rotation.y = currentTransform.rotY;
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    // === 4. 手势 AI 逻辑 ===
+    function initAI() {
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 0, // 性能优先
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onHandResults);
+
+        // 节流检测循环
+        let lastTime = 0;
+        const interval = 1000 / CONFIG.fps;
+
+        async function aiLoop(time) {
+            if (!isRunning) return;
+            
+            if (time - lastTime >= interval && videoEl.videoWidth > 0) {
+                lastTime = time;
+                // 中转 Canvas，防止安卓黑屏
+                if (inputCanvas.width !== videoEl.videoWidth) {
+                    inputCanvas.width = videoEl.videoWidth;
+                    inputCanvas.height = videoEl.videoHeight;
+                }
+                ctx.drawImage(videoEl, 0, 0);
+                
+                try {
+                    await hands.send({image: inputCanvas});
+                } catch (e) {}
+            }
+            requestAnimationFrame(aiLoop);
+        }
+        aiLoop(0);
+    }
+
+    // 手势处理
+    function onHandResults(results) {
         if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
             isPinching = false;
             return;
         }
 
         const lm = results.multiHandLandmarks[0];
-        const thumb = lm[4];
-        const index = lm[8];
-
-        // 简化的距离计算
-        const dist = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
+        const dist = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y); // 拇指与食指距离
 
         if (dist < 0.08) {
-            statusBar.innerText = "✊ 捏合中 - 上下移动缩放";
-            
+            // 捏合中
             if (!isPinching) {
                 isPinching = true;
-                startPinchY = index.y; // 记录初始Y
+                startPinch = { x: lm[8].x, y: lm[8].y };
+                initialTransform = { ...targetTransform };
+                statusBar.innerText = "✊ 交互中：上下缩放 / 左右旋转";
+                statusBar.style.color = "#FFD700";
             } else {
-                // 计算差值
-                const deltaY = startPinchY - index.y; // 向上为正(index.y变小)
-                
-                // 缩放系数
-                const sensitivity = 2.0;
-                targetScale = currentScale + (deltaY * sensitivity);
-                
-                // 限制
-                targetScale = Math.max(0.2, Math.min(3.0, targetScale));
+                // 计算移动量
+                const deltaX = lm[8].x - startPinch.x;
+                const deltaY = startPinch.y - lm[8].y; // 上为正
+
+                // 控制
+                targetTransform.rotY = initialTransform.rotY + (deltaX * 3);
+                targetTransform.scale = Math.max(0.1, Math.min(3, initialTransform.scale + (deltaY * 2)));
             }
         } else {
-            isPinching = false;
-            currentScale = targetScale; // 同步状态
-            statusBar.innerText = "🖐 张开";
+            if (isPinching) {
+                isPinching = false;
+                statusBar.innerText = "🖐 松开以固定";
+                statusBar.style.color = "#fff";
+            }
         }
     }
-
-    // === 6. 渲染循环 (A-Frame Tick) ===
-    AFRAME.registerComponent('control-loop', {
-        tick: function() {
-            if (!modelWrapper) return;
-            
-            // 简单的平滑插值
-            currentScale += (targetScale - currentScale) * 0.1;
-            
-            modelWrapper.object3D.scale.set(currentScale, currentScale, currentScale);
-        }
-    });
-    sceneEl.setAttribute('control-loop', '');
-
 </script>
 </body>
 </html>

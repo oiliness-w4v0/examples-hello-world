@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- 1. 引入 A-Frame -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <!-- 2. 引入 MindAR 的 A-Frame 适配库 -->
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    
+    <style>
+      body { margin: 0; }
+      /* 隐藏 loading 遮罩的自定义样式（可选） */
+      .mindar-ui-loading { background: transparent !important; }
+    </style>
+  </head>
+  <body>
+    <!-- 
+      mindar-image: 配置项 
+      imageTargetSrc: 刚才下载的 .mind 文件路径
+      uiScanning: #no; 可以隐藏默认的扫描框
+    -->
+    <a-scene 
+      mindar-image="imageTargetSrc: ./targets.mind; filterMinCF:0.0001; filterBeta: 0.001;" 
+      color-space="sRGB" 
+      renderer="colorManagement: true, physicallyCorrectLights" 
+      vr-mode-ui="enabled: false" 
+      device-orientation-permission-ui="enabled: false">
+
+      <!-- 资源预加载区 -->
+      <a-assets>
+        <!-- 你的3D头像模型路径 -->
+        <a-asset-item id="avatarModel" src="./my-avatar.glb"></a-asset-item>
+      </a-assets>
+
+      <!-- 摄像头实体 -->
+      <a-camera position="0 0 0" look-controls="false"></a-camera>
+
+      <!-- 
+        Target 实体 
+        targetIndex: 0 代表 .mind 文件里的第一张图（如果你上传了多张图，索引依次增加）
+      -->
+      <a-entity mindar-image-target="targetIndex: 0">
+        
+        <!-- 
+          这里是你的头像 
+          position: x y z (0 0 0 代表紧贴书本中心)
+          scale: 缩放比例 (glb模型单位通常是米，可能需要设为 0.1 或 0.5)
+          rotation: 旋转角度 (x y z)
+          animation: 可以加一点简单的旋转动画
+        -->
+        <a-gltf-model 
+          src="#avatarModel" 
+          position="0 0 0" 
+          scale="0.5 0.5 0.5" 
+          rotation="90 0 0"
+          animation="property: rotation; to: 90 360 0; loop: true; dur: 10000">
+        </a-gltf-model>
+        
+        <!-- 为了调试，你可以先放一个红色的方块看看位置对不对 -->
+        <a-box color="red" position="0 0 0" scale="0.5 0.5 0.5"></a-box>
+
+      </a-entity>
+    </a-scene>
+  </body>
+</html>

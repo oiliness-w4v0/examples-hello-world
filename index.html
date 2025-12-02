@@ -1,65 +1,216 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- 1. 引入 A-Frame -->
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <!-- 2. 引入 MindAR 的 A-Frame 适配库 -->
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>H5 手势识别交互</title>
+    <!-- 引入 MediaPipe Hands 样式与脚本 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     
     <style>
-      body { margin: 0; }
-      /* 隐藏 loading 遮罩的自定义样式（可选） */
-      .mindar-ui-loading { background: transparent !important; }
+        body {
+            margin: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        /* 视频和画布重叠 */
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* 镜像翻转 */
+            z-index: 1;
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* 镜像翻转 */
+            z-index: 2;
+        }
+
+        /* 状态显示面板 */
+        #status-box {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px 30px;
+            border-radius: 30px;
+            color: white;
+            text-align: center;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        #gesture-result {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00ff88;
+        }
+        
+        #debug-info {
+            font-size: 12px;
+            color: #ccc;
+            margin-top: 5px;
+        }
+
+        .loading {
+            position: absolute;
+            z-index: 4;
+            color: white;
+            font-size: 18px;
+            top: 50%;
+        }
     </style>
-  </head>
-  <body>
-    <!-- 
-      mindar-image: 配置项 
-      imageTargetSrc: 刚才下载的 .mind 文件路径
-      uiScanning: #no; 可以隐藏默认的扫描框
-    -->
-    <a-scene 
-      mindar-image="imageTargetSrc: ./targets.mind; filterMinCF:0.0001; filterBeta: 0.001;" 
-      color-space="sRGB" 
-      renderer="colorManagement: true, physicallyCorrectLights" 
-      vr-mode-ui="enabled: false" 
-      device-orientation-permission-ui="enabled: false">
+</head>
+<body>
 
-      <!-- 资源预加载区 -->
-      <a-assets>
-        <!-- 你的3D头像模型路径 -->
-        <a-asset-item id="avatarModel" src="./my-avatar.glb"></a-asset-item>
-      </a-assets>
-
-      <!-- 摄像头实体 -->
-      <a-camera position="0 0 0" look-controls="false"></a-camera>
-
-      <!-- 
-        Target 实体 
-        targetIndex: 0 代表 .mind 文件里的第一张图（如果你上传了多张图，索引依次增加）
-      -->
-      <a-entity mindar-image-target="targetIndex: 0">
+    <div class="container">
+        <!-- 视频源，隐藏显示，但用于采集 -->
+        <video id="input_video" playsinline></video>
+        <!-- 绘制手部骨骼的画布 -->
+        <canvas id="output_canvas"></canvas>
         
-        <!-- 
-          这里是你的头像 
-          position: x y z (0 0 0 代表紧贴书本中心)
-          scale: 缩放比例 (glb模型单位通常是米，可能需要设为 0.1 或 0.5)
-          rotation: 旋转角度 (x y z)
-          animation: 可以加一点简单的旋转动画
-        -->
-        <a-gltf-model 
-          src="#avatarModel" 
-          position="0 0 0" 
-          scale="0.5 0.5 0.5" 
-          rotation="90 0 0"
-          animation="property: rotation; to: 90 360 0; loop: true; dur: 10000">
-        </a-gltf-model>
+        <!-- UI 展示 -->
+        <div id="status-box">
+            <div>当前手势</div>
+            <div id="gesture-result">等待手部...</div>
+            <div id="debug-info">距离: 0</div>
+        </div>
         
-        <!-- 为了调试，你可以先放一个红色的方块看看位置对不对 -->
-        <a-box color="red" position="0 0 0" scale="0.5 0.5 0.5"></a-box>
+        <div id="loading" class="loading">正在加载模型，请稍候...</div>
+    </div>
 
-      </a-entity>
-    </a-scene>
-  </body>
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const resultText = document.getElementById('gesture-result');
+    const debugText = document.getElementById('debug-info');
+    const loadingText = document.getElementById('loading');
+
+    // 调整 Canvas 尺寸以匹配屏幕
+    function resizeCanvas() {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // 关键点索引
+    // 4: 大拇指指尖 (Thumb_Tip)
+    // 8: 食指指尖 (Index_Finger_Tip)
+    const THUMB_TIP = 4;
+    const INDEX_FINGER_TIP = 8;
+
+    /**
+     * 计算两点之间的欧几里得距离
+     */
+    function calculateDistance(p1, p2) {
+        return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+    }
+
+    function onResults(results) {
+        loadingText.style.display = 'none';
+        
+        // 清空画布
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        
+        // 如果检测到了手
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            for (const landmarks of results.multiHandLandmarks) {
+                // 1. 绘制骨骼连线
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+                               {color: '#00FF00', lineWidth: 2});
+                // 2. 绘制关键点
+                drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
+
+                // 3. 识别逻辑
+                const thumbTip = landmarks[THUMB_TIP];
+                const indexTip = landmarks[INDEX_FINGER_TIP];
+
+                // 计算拇指和食指指尖的距离 (坐标是归一化的 0.0 - 1.0)
+                const distance = calculateDistance(thumbTip, indexTip);
+                
+                // 显示调试数据
+                debugText.innerText = `指尖距离: ${distance.toFixed(3)}`;
+
+                // 阈值判断
+                // 距离小于 0.08 认为是捏合 (根据实际体验微调)
+                // 距离大于 0.15 认为是张开
+                if (distance < 0.08) {
+                    resultText.innerText = "✊ 捏合 (Pinch)";
+                    resultText.style.color = "#ffdd00";
+                    
+                    // 可在此处触发交互，例如拖拽元素
+                    
+                } else if (distance > 0.15) {
+                    resultText.innerText = "🖐 张开 (Open)";
+                    resultText.style.color = "#00ff88";
+                } else {
+                    resultText.innerText = "准备中...";
+                    resultText.style.color = "#ffffff";
+                }
+            }
+        } else {
+            resultText.innerText = "未检测到手部";
+            resultText.style.color = "#ccc";
+            debugText.innerText = "";
+        }
+        canvasCtx.restore();
+    }
+
+    // 初始化 MediaPipe Hands
+    const hands = new Hands({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }});
+
+    hands.setOptions({
+        maxNumHands: 1,             // 最多检测一只手
+        modelComplexity: 1,         // 模型复杂度：0(性能好), 1(平衡)
+        minDetectionConfidence: 0.5,// 检测置信度阈值
+        minTrackingConfidence: 0.5  // 追踪置信度阈值
+    });
+
+    hands.onResults(onResults);
+
+    // 启动摄像头
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 1280,
+        height: 720,
+        facingMode: "user" // 使用前置摄像头
+    });
+    
+    camera.start().catch(err => {
+        console.error(err);
+        loadingText.innerText = "无法启动摄像头，请检查权限或HTTPS环境";
+    });
+</script>
+</body>
 </html>

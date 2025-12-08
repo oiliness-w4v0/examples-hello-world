@@ -9,27 +9,27 @@ Deno.serve(async (req: Request) => {
   }
 
   // Hardcoded routes
-  if (pathname === "/my-avatar.glb") {
-    try {
-      const data = await Deno.readFile("./my-avatar.glb");
-      return new Response(data, {
-        headers: { "content-type": "model/gltf-binary" },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
+  // if (pathname === "/my-avatar.glb") {
+  try {
+    const data = await Deno.readFile("./" + pathname);
+    return new Response(data, {
+      headers: { "content-type": "model/gltf-binary" },
+    });
+  } catch {
+    return new Response("Not found", { status: 404 });
   }
+  // }
 
-  if (pathname === "/targets.mind") {
-    try {
-      const data = await Deno.readFile("./targets.mind");
-      return new Response(data, {
-        headers: { "content-type": "application/mind" },
-      });
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  }
+  // if (pathname === "/targets.mind") {
+  //   try {
+  //     const data = await Deno.readFile("./targets.mind");
+  //     return new Response(data, {
+  //       headers: { "content-type": "application/mind" },
+  //     });
+  //   } catch {
+  //     return new Response("Not found", { status: 404 });
+  //   }
+  // }
 
   // Fallback: try to serve other files via std serveFile
   try {

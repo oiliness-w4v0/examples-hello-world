@@ -1,0 +1,266 @@
+{
+  "accessors": [
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 32584,
+      "max": [
+        -0.7266380190849304,
+        20.691009521484375,
+        -13.406646728515625
+      ],
+      "min": [
+        -0.9522349834442139,
+        20.4665584564209,
+        -13.50522232055664
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 391008,
+      "componentType": 5126,
+      "count": 32584,
+      "max": [
+        0.9997542500495911,
+        0.9995918869972229,
+        0.9999958872795105
+      ],
+      "min": [
+        -0.9998915195465088,
+        -0.999991774559021,
+        -0.9999986290931702
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 32584,
+      "max": [
+        0.9989548325538635,
+        0.9999394416809082,
+        0.9978781938552856,
+        1.0
+      ],
+      "min": [
+        -0.9998365640640259,
+        -0.9805459976196289,
+        -0.9995339512825012,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 32584,
+      "max": [
+        0.9999709725379944,
+        0.9156820178031921
+      ],
+      "min": [
+        3.199999991920777e-05,
+        5.8000001445179805e-05
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "componentType": 5125,
+      "count": 192000,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "extras": {
+      "author": "Minneapolis Institute of Art (https://sketchfab.com/artsmia)",
+      "license": "CC0-1.0 (http://creativecommons.org/publicdomain/zero/1.0/)",
+      "source": "https://sketchfab.com/3d-models/minai-bowl-depicting-a-lady-riding-an-elephant-1cc76a01d99b41848e42c28ef1b44b13",
+      "title": "Minai 'Bowl Depicting a Lady Riding an Elephant'"
+    },
+    "generator": "Sketchfab-12.63.0",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 768000,
+      "name": "floatBufferViews",
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 260672,
+      "byteOffset": 768000,
+      "byteStride": 8,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 782016,
+      "byteOffset": 1028672,
+      "byteStride": 12,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 521344,
+      "byteOffset": 1810688,
+      "byteStride": 16,
+      "name": "floatBufferViews",
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 2332032,
+      "uri": "scene.bin"
+    }
+  ],
+  "extensionsRequired": [
+    "KHR_materials_pbrSpecularGlossiness"
+  ],
+  "extensionsUsed": [
+    "KHR_materials_pbrSpecularGlossiness"
+  ],
+  "images": [
+    {
+      "uri": "textures/Mia_001096_ElephantBowl_64k_diffuse.jpeg"
+    },
+    {
+      "uri": "textures/Mia_001096_ElephantBowl_64k_specularGlossiness.jpeg"
+    },
+    {
+      "uri": "textures/Mia_001096_ElephantBowl_64k_normal.png"
+    },
+    {
+      "uri": "textures/Mia_001096_ElephantBowl_64k_occlusion.png"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "extensions": {
+        "KHR_materials_pbrSpecularGlossiness": {
+          "diffuseFactor": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "diffuseTexture": {
+            "index": 0
+          },
+          "glossinessFactor": 0.0,
+          "specularFactor": [
+            0.007985094632811478,
+            0.007985094632811478,
+            0.007985094632811478
+          ],
+          "specularGlossinessTexture": {
+            "index": 1
+          }
+        }
+      },
+      "name": "Mia_001096_ElephantBowl_64k",
+      "normalTexture": {
+        "index": 2
+      },
+      "occlusionTexture": {
+        "index": 3
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Object_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TANGENT": 2,
+            "TEXCOORD_0": 3
+          },
+          "indices": 4,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "children": [
+        1
+      ],
+      "matrix": [
+        0.695189356803894,
+        0.02797694504261001,
+        0.7182819843292236,
+        0.0,
+        0.7188266515731812,
+        -0.0270569752901791,
+        -0.6946626305580139,
+        0.0,
+        -6.938893903907228e-18,
+        0.9992423057556152,
+        -0.03892029449343659,
+        0.0,
+        -15.048477172851563,
+        0.5700903534889235,
+        -6.204240322113037,
+        1.0
+      ],
+      "name": "Sketchfab_model"
+    },
+    {
+      "children": [
+        2
+      ],
+      "name": "Mia_001096_ElephantBowl_64k.obj.cleaner.materialmerger.gles"
+    },
+    {
+      "mesh": 0,
+      "name": "Object_2"
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Sketchfab_Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    },
+    {
+      "sampler": 0,
+      "source": 3
+    }
+  ]
+}
